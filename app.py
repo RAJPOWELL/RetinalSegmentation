@@ -55,3 +55,4 @@ def generate_segmentation(input_image_path, output_image_path):
 input_image_path = "files/image/5.png"
 output_image_path = "files/output/op5.png"
 generate_segmentation(input_image_path, output_image_path)
+
