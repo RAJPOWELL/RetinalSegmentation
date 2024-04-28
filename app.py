@@ -52,6 +52,6 @@ def generate_segmentation(input_image_path, output_image_path):
     cv2.imwrite(output_image_path, pred_mask)
 
 
-input_image_path = "files/image/6.png"
-output_image_path = "files/output/op6.png"
+input_image_path = "files/image/5.png"
+output_image_path = "files/output/op5.png"
 generate_segmentation(input_image_path, output_image_path)
