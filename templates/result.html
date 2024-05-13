@@ -1,16 +1,17 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Segmentation Result</title>
+    <title>Result</title>
 </head>
 <body>
-    <h2>Input Image</h2>
-    <img src="{{ input_image }}" alt="Input Image" width="400">
-
-    <h2>Segmented Image</h2>
-    <img src="{{ segmented_image }}" alt="Segmented Image" width="400">
-
-    <h2>Processed Image</h2>
-    <img src="{{ processed_image }}" alt="Processed Image" width="600">
+    <h1>Result</h1>
+    <h2>Original Image</h2>
+    <img src="data:image/png;base64,{{ original_image }}">
+    
+    <h2>Masked Image</h2>
+    <img src="data:image/png;base64,{{ masked_image }}">
+    
+    <h2>Post-Processed Image</h2>
+    <img src="data:image/png;base64,{{ post_processed_image }}">
 </body>
 </html>

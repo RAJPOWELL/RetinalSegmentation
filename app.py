@@ -1,14 +1,17 @@
 import os
+from flask import Flask, render_template, request, redirect, url_for
 import cv2
 import numpy as np
 import torch
-from flask import Flask, request, render_template
 from model import build_unet
+import base64
 
 app = Flask(__name__)
 
 # Path to the checkpoint file
 checkpoint_path = "files/savedModel/checkpoint.pth"
+
+# Check if CUDA is available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load the pre-trained model
@@ -17,17 +20,15 @@ model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 model.eval()
 
 def mask_parse(mask):
-    mask = np.expand_dims(mask, axis=-1)
-    mask = np.concatenate([mask, mask, mask], axis=-1)
+    mask = np.expand_dims(mask, axis=-1)    ## (512, 512, 1)
+    mask = np.concatenate([mask, mask, mask], axis=-1)  ## (512, 512, 3)
     return mask
 
-def generate_segmentation(input_image_path, output_image_path):
-    # Read the input image
-    image = cv2.imread(input_image_path, cv2.IMREAD_COLOR)
-    image = cv2.resize(image, (512, 512))  # Resize to match model input size
-    x = np.transpose(image, (2, 0, 1))      
+def generate_segmentation(input_image):
+    image = cv2.resize(input_image, (512, 512))  # Resize to match model input size
+    x = np.transpose(image, (2, 0, 1))      ## (3, 512, 512)
     x = x / 255.0
-    x = np.expand_dims(x, axis=0)          
+    x = np.expand_dims(x, axis=0)           ## (1, 3, 512, 512)
     x = x.astype(np.float32)
     x = torch.from_numpy(x)
     
@@ -38,65 +39,69 @@ def generate_segmentation(input_image_path, output_image_path):
     with torch.no_grad():
         pred_y = model(x)
         pred_y = torch.sigmoid(pred_y)
-        pred_y = pred_y[0].cpu().numpy()        
-        pred_y = np.squeeze(pred_y, axis=0)     
+        pred_y = pred_y[0].cpu().numpy()        ## (1, 512, 512)
+        pred_y = np.squeeze(pred_y, axis=0)     ## (512, 512)
         pred_y = pred_y > 0.5
         pred_y = np.array(pred_y, dtype=np.uint8)
 
-    # Create and save the output mask image
+    # Save the output mask image
     pred_mask = mask_parse(pred_y)
-    cv2.imwrite(output_image_path, pred_mask)
-
-    return output_image_path 
+    return pred_mask
 
 def adjust_gamma(image, gamma=1.0):
     inv_gamma = 1.0 / gamma
     table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype('uint8')
     return cv2.LUT(image, table)
 
-def adjust_contrast(image, contrast_factor):
-    # Apply contrast reduction by multiplying pixel values by the factor
-    adjusted_image = (image * 0.9).astype(np.uint8)
-    return adjusted_image
-
 @app.route('/', methods=['GET', 'POST'])
-def upload_file():
+def index():
     if request.method == 'POST':
-        # Handle file upload
-        file = request.files['file']
-        if file:
-            # Save the uploaded file
-            input_image_path = "uploads/input_image.jpg"
-            file.save(input_image_path)
+        # Get the uploaded image
+        file = request.files['image']
+        
+        # Save the uploaded image
+        input_image_path = os.path.join('files', 'image', file.filename)
+        file.save(input_image_path)
+        
+        # Load the input image
+        input_image = cv2.imread(input_image_path)
+        
+        # Generate the segmentation mask
+        masked_image = generate_segmentation(input_image)
+        
+        # Apply post-processing
+        gamma_corrected = adjust_gamma(masked_image, gamma=50.0)
+        gray_image = cv2.cvtColor(gamma_corrected, cv2.COLOR_BGR2GRAY)
+        low_contrast_image = (gray_image * 0.9).astype(np.uint8)
+        
+        # Save the processed images
+        cv2.imwrite(os.path.join('files', 'output', 'masked.png'), masked_image)
+        cv2.imwrite(os.path.join('files', 'output', 'post_processed.png'), low_contrast_image)
+        
+        # Encode the images to base64
+        original_image_b64 = base64.b64encode(cv2.imencode('.png', input_image)[1]).decode()
+        masked_image_b64 = base64.b64encode(cv2.imencode('.png', masked_image)[1]).decode()
+        post_processed_image_b64 = base64.b64encode(cv2.imencode('.png', low_contrast_image)[1]).decode()
+        
+        # Render the result page with the base64 encoded images
+        return render_template('result.html', original_image=original_image_b64, masked_image=masked_image_b64, post_processed_image=post_processed_image_b64)
+    
+    return render_template('index.html')
 
-            # Generate segmentation
-            output_image_path = "static/output/output_mask.png"
-            segmented_image_path = generate_segmentation(input_image_path, output_image_path)
+@app.route('/result')
+def result():
+    # Load the processed images
+    original_image = cv2.imread(os.path.join('files', 'image', os.listdir('files/image')[0]))
+    masked_image = cv2.imread(os.path.join('files', 'output', 'masked.png'))
+    post_processed_image = cv2.imread(os.path.join('files', 'output', 'post_processed.png'))
+    
+    # Encode the images to base64
+    original_image_b64 = base64.b64encode(cv2.imencode('.png', original_image)[1]).decode()
+    masked_image_b64 = base64.b64encode(cv2.imencode('.png', masked_image)[1]).decode()
+    post_processed_image_b64 = base64.b64encode(cv2.imencode('.png', post_processed_image)[1]).decode()
+    
+    # Render the result page with the base64 encoded images
+    return render_template('result.html', original_image=original_image_b64, masked_image=masked_image_b64, post_processed_image=post_processed_image_b64)
 
-            # Process the segmented image
-            img = cv2.imread(segmented_image_path)
-
-            # Apply gamma correction
-            gamma = 50.0
-            img_gamma_corrected = adjust_gamma(img, gamma)
-
-            # Convert to grayscale
-            img_gray = cv2.cvtColor(img_gamma_corrected, cv2.COLOR_BGR2GRAY)
-
-            # Apply contrast reduction
-            img_low_contrast = (img_gray * 0.9).astype(np.uint8)
-
-            # Save the processed image
-            processed_image_path = "static/output/processed_image.jpg"
-            cv2.imwrite(processed_image_path, img_low_contrast)
-
-            # Render the result page with image paths
-            return render_template('result.html', 
-                                   input_image="uploads/input_image.jpg", 
-                                   segmented_image=segmented_image_path, 
-                                    processed_image="static/output/processed_image.jpg")
-
-    return render_template('upload.html')
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
